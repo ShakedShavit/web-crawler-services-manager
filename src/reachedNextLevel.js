@@ -23,7 +23,7 @@ const crawlReachedNextLevel = async (queueName, crawlHashKey) => {
     deleteQueue(currQueueUrl);
     let newQueue = '';
     if (shouldCreateQueue) newQueue = await createQueue(queueName, newLevel + 1);
-    await setHashValuesInRedis(crawlHashKey, ['currentLevel', newLevel, 'currQueueUrl', nextQueueUrl, 'nextQueueUrl', newQueue, 'currLvlLinksLen', nextLvlLinksLen, 'nextLvlLinksLen', 0]);
+    await setHashValuesInRedis(crawlHashKey, ['currentLevel', newLevel, 'currQueueUrl', nextQueueUrl, 'nextQueueUrl', newQueue, 'lvlPageCounter', 0, 'currLvlLinksLen', nextLvlLinksLen, 'nextLvlLinksLen', 0]);
 
     return false;
 }
