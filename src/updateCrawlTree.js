@@ -46,12 +46,8 @@ const updateCrawlTree = async (queueName) => {
     const redisTreeListKey = getPagesListKeyForCrawl(queueName);
     const redisBfsUrlsListKey = getBfsUrlsListKeyForCrawl(queueName);
     let startNewPagesListIndex = 0;
-    console.time('50 pages time');
-let c = 0;
-
     while (true) {
         try {
-            console.time('update')
             const getPagesPromise = getElementsFromListInRedis(redisTreeListKey, startNewPagesListIndex, -1);
             const getHashValuesPromise = getHashValuesFromRedis(crawlHashKey, ['tree', 'pageCounter', 'lvlPageCounter', 'currLvlLinksLen', 'currentLevel', 'maxPages']);
             const getParentElPromise = popFirstElementOfListInRedis(redisBfsUrlsListKey);
@@ -63,7 +59,6 @@ let c = 0;
             let parentEl = results[2].value;
             if (!parentEl) {
                 await setHashValuesInRedis(crawlHashKey, ['isCrawlingDone', true]);
-                console.timeEnd('50 pages time');
                 return;
             }
             parentEl = JSON.parse(parentEl);
@@ -94,29 +89,22 @@ let c = 0;
 
                 if (treeJSON.includes(`"url":"${newPagesBfsObj[i].url}"`)) {
                     delete newPagesBfsObj[i].children;
-                } else if (newPagesBfsObj[i].linksLength !== 0) {
-                    console.log("\nadding:", pagesBfsJSON[i], "to the bfs list\n");
+                } else if (newPagesBfsObj[i].linksLength !== 0)
                     await appendElementsToListInRedis(redisBfsUrlsListKey, [pagesBfsJSON[i]]);
-                }
 
                 newPagesLen++;
-c++;
                 treeJSON = addNewPageToTree(newPagesBfsObj[i], treeJSON);
             }
 
             // If reached pages limit then stop crawling
             if (!!maxPages && maxPages <= pageCounter + newPagesLen) {
                 await setHashValuesInRedis(crawlHashKey, ['tree', treeJSON, 'isCrawlingDone', true]);
-                console.timeEnd('50 pages time');
-                console.log("\n\n\nPAGES COUNT", c, "\n\n\n");
                 return;
             }
 
             // Update tree, pageCounter, and lvlPageCounter
-            if (newPagesLen !== 0) {
-                // await setHashValuesInRedis(crawlHashKey, ['tree', treeJSON]);
+            if (newPagesLen !== 0)
                 promises.push(incHashIntValInRedis(crawlHashKey, 'pageCounter', newPagesLen));
-            }
             if (newPagesOriginalLen !== 0) promises.push(incHashIntValInRedis(crawlHashKey, 'lvlPageCounter', newPagesOriginalLen));
 
             let isCrawlingDone = false;
@@ -131,7 +119,6 @@ c++;
                 if (lvlPageCounter + newPagesOriginalLen >= currLvlLinksLen || hasBfsPageReachedNextLvl) {
                     await Promise.allSettled(promises);
                     isCrawlingDone = await crawlReachedNextLevel(queueName, crawlHashKey);
-                    console.log("\n\n\n\n\n\n\n\nHEREEEEEEE", isCrawlingDone);
                 }
             }
 
@@ -139,13 +126,10 @@ c++;
             await Promise.allSettled(promises);
 
             if (isCrawlingDone) {
-                console.timeEnd('50 pages time');
-                console.log("\n\n\nPAGES COUNT", c, "\n\n\n");
                 await setHashValuesInRedis(crawlHashKey, ['isCrawlingDone', true]);
                 return;
             }
 
-            console.timeEnd('update')
             await new Promise(resolve => setTimeout(resolve, 500));
         } catch (err) {
             console.log(err.message, '60');
