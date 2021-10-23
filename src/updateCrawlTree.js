@@ -6,21 +6,19 @@ const {
     appendElementsToStartOfListInRedis,
     getElementsFromListInRedis,
     removeElementFromListInRedis,
-    popFirstElementOfListInRedis
-} = require('./utils/redis');
-const {
-    crawlReachedNextLevel
-} = require('./reachedNextLevel');
+    popFirstElementOfListInRedis,
+} = require("./utils/redis");
+const { crawlReachedNextLevel } = require("./reachedNextLevel");
 
 const getHashKeyForCrawl = (queueName) => {
     return `workers:${queueName}`;
-}
+};
 const getPagesListKeyForCrawl = (queueName) => {
     return `pages-list:${queueName}`;
-}
+};
 const getBfsUrlsListKeyForCrawl = (queueName) => {
     return `urls-bfs-list:${queueName}`;
-}
+};
 
 // Add new page obj directly to JSON formatted tree (without parsing it)
 const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
@@ -29,9 +27,9 @@ const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
     let insertIndex = treeJSON.indexOf(searchString);
     if (insertIndex === -1) return newPageJSON; // If the tree is empty (first page insertion)
     insertIndex += searchString.length;
-    if (treeJSON[insertIndex] === '{') newPageJSON += ',';
+    if (treeJSON[insertIndex] === "{") newPageJSON += ",";
     return treeJSON.slice(0, insertIndex) + newPageJSON + treeJSON.slice(insertIndex);
-}
+};
 
 const addNewPageToTree = (pageObj, treeJSON) => {
     let parentUrl = pageObj.parentUrl;
@@ -39,7 +37,11 @@ const addNewPageToTree = (pageObj, treeJSON) => {
     delete pageObj.linksLength;
     delete pageObj.childrenCounter;
     return getUpdatedJsonTree(treeJSON, pageObj, parentUrl);
-}
+};
+
+const didReachMaxPages = (maxPages, pageCounter, newPagesCounter) => {
+    return !!maxPages && maxPages <= pageCounter + newPagesCounter;
+};
 
 const updateCrawlTree = async (queueName) => {
     const crawlHashKey = getHashKeyForCrawl(queueName);
@@ -48,17 +50,33 @@ const updateCrawlTree = async (queueName) => {
     let startNewPagesListIndex = 0;
     while (true) {
         try {
-            const getPagesPromise = getElementsFromListInRedis(redisTreeListKey, startNewPagesListIndex, -1);
-            const getHashValuesPromise = getHashValuesFromRedis(crawlHashKey, ['tree', 'pageCounter', 'lvlPageCounter', 'currLvlLinksLen', 'currentLevel', 'maxPages']);
+            const getPagesPromise = getElementsFromListInRedis(
+                redisTreeListKey,
+                startNewPagesListIndex,
+                -1
+            );
+            const getHashValuesPromise = getHashValuesFromRedis(crawlHashKey, [
+                "tree",
+                "pageCounter",
+                "lvlPageCounter",
+                "currLvlLinksLen",
+                "currentLevel",
+                "maxPages",
+            ]);
             const getParentElPromise = popFirstElementOfListInRedis(redisBfsUrlsListKey);
 
-            const results = await Promise.allSettled([getPagesPromise, getHashValuesPromise, getParentElPromise]);
+            const results = await Promise.allSettled([
+                getPagesPromise,
+                getHashValuesPromise,
+                getParentElPromise,
+            ]);
             let allNewPages = results[0].value;
-            let [treeJSON, pageCounter, lvlPageCounter, currLvlLinksLen, currentLevel, maxPages] = results[1].value;
+            let [treeJSON, pageCounter, lvlPageCounter, currLvlLinksLen, currentLevel, maxPages] =
+                results[1].value;
 
             let parentEl = results[2].value;
             if (!parentEl) {
-                await setHashValuesInRedis(crawlHashKey, ['isCrawlingDone', true]);
+                await setHashValuesInRedis(crawlHashKey, ["isCrawlingDone", true]);
                 return;
             }
             parentEl = JSON.parse(parentEl);
@@ -80,10 +98,10 @@ const updateCrawlTree = async (queueName) => {
                 pagesBfsJSON.push(page);
             }
 
-            let newPagesOriginalLen = pagesBfsJSON.length
+            let newPagesOriginalLen = pagesBfsJSON.length;
             let newPagesLen = 0;
             for (let i = 0; i < newPagesOriginalLen; i++) {
-                if (!!maxPages && maxPages < pageCounter + i) break;
+                if (didReachMaxPages(maxPages, pageCounter, i - 1)) break;
 
                 promises.push(removeElementFromListInRedis(redisTreeListKey, pagesBfsJSON[i], 1));
 
@@ -97,45 +115,69 @@ const updateCrawlTree = async (queueName) => {
             }
 
             // If reached pages limit then stop crawling
-            if (!!maxPages && maxPages <= pageCounter + newPagesLen) {
-                await setHashValuesInRedis(crawlHashKey, ['tree', treeJSON, 'isCrawlingDone', true]);
+            if (didReachMaxPages(maxPages, pageCounter, newPagesLen)) {
+                await setHashValuesInRedis(crawlHashKey, [
+                    "tree",
+                    treeJSON,
+                    "isCrawlingDone",
+                    true,
+                ]);
                 return;
             }
 
             // Update tree, pageCounter, and lvlPageCounter
             if (newPagesLen !== 0)
-                promises.push(incHashIntValInRedis(crawlHashKey, 'pageCounter', newPagesLen));
-            if (newPagesOriginalLen !== 0) promises.push(incHashIntValInRedis(crawlHashKey, 'lvlPageCounter', newPagesOriginalLen));
+                promises.push(incHashIntValInRedis(crawlHashKey, "pageCounter", newPagesLen));
+            if (newPagesOriginalLen !== 0)
+                promises.push(
+                    incHashIntValInRedis(crawlHashKey, "lvlPageCounter", newPagesOriginalLen)
+                );
 
             let isCrawlingDone = false;
             let hasBfsPageReachedNextLvl = parentEl.level >= currentLevel;
-            if (parentEl.linksLength > parentEl.childrenCounter + newPagesOriginalLen && !hasBfsPageReachedNextLvl) {
+            if (
+                parentEl.linksLength > parentEl.childrenCounter + newPagesOriginalLen &&
+                !hasBfsPageReachedNextLvl
+            ) {
                 parentEl.childrenCounter += newPagesOriginalLen;
-                promises.push(appendElementsToStartOfListInRedis(redisBfsUrlsListKey, [JSON.stringify(parentEl)]));
+                promises.push(
+                    appendElementsToStartOfListInRedis(redisBfsUrlsListKey, [
+                        JSON.stringify(parentEl),
+                    ])
+                );
                 startNewPagesListIndex += allNewPages.length - newPagesLen; // If the parent hasn't changed then the next iteration don't poll the new pages that you already polled (the ones with the different parent)
             } else {
                 startNewPagesListIndex = 0;
                 // If reached next level
-                if (lvlPageCounter + newPagesOriginalLen >= currLvlLinksLen || hasBfsPageReachedNextLvl) {
+                if (
+                    lvlPageCounter + newPagesOriginalLen >= currLvlLinksLen ||
+                    hasBfsPageReachedNextLvl
+                ) {
                     await Promise.allSettled(promises);
                     isCrawlingDone = await crawlReachedNextLevel(queueName, crawlHashKey);
                 }
             }
 
-            promises.push(setHashValuesInRedis(crawlHashKey, ['tree', treeJSON, 'isCrawlingDone', isCrawlingDone]));
+            promises.push(
+                setHashValuesInRedis(crawlHashKey, [
+                    "tree",
+                    treeJSON,
+                    "isCrawlingDone",
+                    isCrawlingDone,
+                ])
+            );
             await Promise.allSettled(promises);
 
             if (isCrawlingDone) {
-                await setHashValuesInRedis(crawlHashKey, ['isCrawlingDone', true]);
+                await setHashValuesInRedis(crawlHashKey, ["isCrawlingDone", true]);
                 return;
             }
 
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, 500));
         } catch (err) {
-            console.log(err.message, '60');
             throw new Error(err.message);
         }
     }
-}
+};
 
 module.exports = updateCrawlTree;

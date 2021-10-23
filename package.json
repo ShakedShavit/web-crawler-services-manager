@@ -2,8 +2,6 @@
   "dependencies": {
     "aws-sdk": "^2.921.0",
     "bluebird": "^3.7.2",
-    "cors": "^2.8.5",
-    "express": "^4.17.1",
     "redis": "^3.1.2"
   },
   "devDependencies": {
